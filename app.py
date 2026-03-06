@@ -1,10 +1,24 @@
 import streamlit as st
-import cv2
 import numpy as np
-from keras.models import load_model
-from keras.preprocessing.image import img_to_array
 from PIL import Image
 import os
+
+try:
+    import cv2
+except ImportError as e:
+    st.error("OpenCV not found. Please check packages.txt and requirements.txt.")
+    st.stop()
+
+try:
+    from tensorflow.keras.models import load_model
+    from tensorflow.keras.preprocessing.image import img_to_array
+except ImportError:
+    try:
+        from keras.models import load_model
+        from keras.preprocessing.image import img_to_array
+    except ImportError as e:
+        st.error("Keras/TensorFlow not found. Please check requirements.txt.")
+        st.stop()
 
 # ── Page config ────────────────────────────────────────────────────────────────
 st.set_page_config(
