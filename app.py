@@ -10,23 +10,39 @@ st.set_page_config(
     layout="centered"
 )
 
-# ── Load mediapipe & model ─────────────────────────────────────────────────────
+# ── Load model ─────────────────────────────────────────────────────────────────
 @st.cache_resource
-def load_resources():
-    import mediapipe as mp
+def load_model():
     import tensorflow as tf
-
     base_dir = os.path.dirname(os.path.abspath(__file__))
     model_path = os.path.join(base_dir, 'model.h5')
     model = tf.keras.models.load_model(model_path)
+    return model
 
-    face_detection = mp.solutions.face_detection.FaceDetection(
-        model_selection=0, min_detection_confidence=0.5
+@st.cache_resource
+def load_face_detector():
+    from mediapipe.tasks import python as mp_python
+    from mediapipe.tasks.python import vision as mp_vision
+    import urllib.request
+
+    # Download the mediapipe face detector model
+    model_url = "https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite"
+    model_path = "/tmp/face_detector.tflite"
+
+    if not os.path.exists(model_path):
+        urllib.request.urlretrieve(model_url, model_path)
+
+    base_options = mp_python.BaseOptions(model_asset_path=model_path)
+    options = mp_vision.FaceDetectorOptions(
+        base_options=base_options,
+        min_detection_confidence=0.5
     )
-    return face_detection, model
+    detector = mp_vision.FaceDetector.create_from_options(options)
+    return detector
 
 try:
-    face_detection, classifier = load_resources()
+    classifier = load_model()
+    face_detector = load_face_detector()
     model_loaded = True
 except Exception as e:
     model_loaded = False
@@ -39,33 +55,33 @@ EMOTION_EMOJI  = {
     'Happy': '😄', 'Neutral': '😐', 'Sad': '😢', 'Surprise': '😲',
 }
 
-# ── Detection function ─────────────────────────────────────────────────────────
+# ── Detection ──────────────────────────────────────────────────────────────────
 def detect_emotion(pil_image):
     import mediapipe as mp
 
-    img_rgb = np.array(pil_image.convert("RGB"))
-    h, w = img_rgb.shape[:2]
-    draw = ImageDraw.Draw(pil_image)
+    img_rgb = pil_image.convert("RGB")
+    np_img = np.array(img_rgb)
+    h, w = np_img.shape[:2]
+    draw = ImageDraw.Draw(img_rgb)
     detected = []
 
-    results = face_detection.process(img_rgb)
+    mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=np_img)
+    results = face_detector.detect(mp_image)
 
     if not results.detections:
         draw.text((30, 30), "No face detected", fill=(255, 0, 0))
-        return pil_image, detected
+        return img_rgb, detected
 
     for detection in results.detections:
-        bbox = detection.location_data.relative_bounding_box
-        x1 = max(int(bbox.xmin * w), 0)
-        y1 = max(int(bbox.ymin * h), 0)
-        bw = int(bbox.width * w)
-        bh = int(bbox.height * h)
-        x2 = min(x1 + bw, w)
-        y2 = min(y1 + bh, h)
+        bbox = detection.bounding_box
+        x1 = max(bbox.origin_x, 0)
+        y1 = max(bbox.origin_y, 0)
+        x2 = min(x1 + bbox.width, w)
+        y2 = min(y1 + bbox.height, h)
 
         draw.rectangle([x1, y1, x2, y2], outline=(0, 120, 255), width=3)
 
-        face_crop = pil_image.crop((x1, y1, x2, y2)).convert("L").resize((48, 48))
+        face_crop = img_rgb.crop((x1, y1, x2, y2)).convert("L").resize((48, 48))
         roi = np.array(face_crop).astype("float32") / 255.0
         roi = np.expand_dims(roi, axis=-1)
         roi = np.expand_dims(roi, axis=0)
@@ -78,7 +94,7 @@ def detect_emotion(pil_image):
         text = f"{EMOTION_EMOJI[label]} {label} ({confidence:.1f}%)"
         draw.text((x1, max(y1 - 25, 0)), text, fill=(0, 230, 0))
 
-    return pil_image, detected
+    return img_rgb, detected
 
 
 # ── UI ─────────────────────────────────────────────────────────────────────────
